@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 //go:embed crawler-user-agents.json
@@ -85,6 +88,37 @@ var Crawlers = func() []Crawler {
 	}
 	return crawlers
 }()
+
+var (
+	// DefaultCacheSize is the max number of UA entries in each LRU.
+	DefaultCacheSize = 5000
+	// DefaultNegativeTTL is the TTL for "not a crawler" entries.
+	DefaultNegativeTTL = 6 * time.Hour
+)
+
+// UACache wraps two LRUs for UA lookups:
+//   - pos: no TTL, positive hits (is crawler)
+//   - neg: with TTL, negative hits (not a crawler)
+type UACache[K comparable, V any] struct {
+	pos *lru.Cache[K, V]
+	neg *expirable.LRU[K, V]
+}
+
+// Cache is the global in-memory UACache instance.
+var Cache = func() *UACache[string, struct{}] {
+	pos, err := lru.New[string, struct{}](DefaultCacheSize)
+	if err != nil {
+		panic(err)
+	}
+	neg := expirable.NewLRU[string, struct{}](DefaultCacheSize, nil, DefaultNegativeTTL)
+	return &UACache[string, struct{}]{
+		pos: pos,
+		neg: neg,
+	}
+}()
+
+// MatchCache caches UA → crawler indices (with TTL).
+var MatchCache = expirable.NewLRU[string, []int](DefaultCacheSize, nil, DefaultNegativeTTL)
 
 // analyzePattern expands a regular expression to the list of matching texts
 // for plain search. The list is complete, i.e. iff a text matches the input
@@ -493,6 +527,27 @@ func IsCrawler(userAgent string) bool {
 	return false
 }
 
+// IsCrawlerCached does the same as IsCrawler, but uses in-memory caches:
+//   - pos: LRU without TTL for positive hits (crawler)
+//   - neg: LRU with TTL for negative hits (not crawler)
+func IsCrawlerCached(userAgent string) bool {
+
+    if _, ok := Cache.pos.Get(userAgent); ok {
+        return true
+    }
+    if _, ok := Cache.neg.Get(userAgent); ok {
+        return false
+    }
+
+    hit := IsCrawler(userAgent)
+    if hit {
+        Cache.pos.Add(userAgent, struct{}{})
+    } else {
+        Cache.neg.Add(userAgent, struct{}{}) // у neg есть TTL
+    }
+    return hit
+}
+
 // Finds all crawlers matching the User Agent and returns the list of their indices in Crawlers.
 func MatchingCrawlers(userAgent string) []int {
 	text := "^" + userAgent + "$"
@@ -536,4 +591,17 @@ func MatchingCrawlers(userAgent string) []int {
 	}
 
 	return indices
+}
+
+// MatchingCrawlersCached is a cached wrapper for MatchingCrawlers.
+// Results are stored in MatchCache (LRU with TTL).
+func MatchingCrawlersCached(userAgent string) []int{
+    if v, ok := MatchCache.Get(userAgent); ok {
+        return v
+    }
+
+    indices := MatchingCrawlers(userAgent)
+    MatchCache.Add(userAgent,indices)
+
+    return indices
 }

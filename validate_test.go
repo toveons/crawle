@@ -577,3 +577,39 @@ func BenchmarkMatchingCrawlersNegative(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkIsCrawlerCachedPositive(b *testing.B) {
+	b.SetBytes(int64(len(crawlerUA)))
+	for n := 0; n < b.N; n++ {
+		if !IsCrawlerCached(crawlerUA) {
+			b.Fail()
+		}
+	}
+}
+
+func BenchmarkMatchingCrawlersCachedPositive(b *testing.B) {
+	b.SetBytes(int64(len(crawlerUA)))
+	for n := 0; n < b.N; n++ {
+		if len(MatchingCrawlersCached(crawlerUA)) == 0 {
+			b.Fail()
+		}
+	}
+}
+
+func BenchmarkIsCrawlerCachedNegative(b *testing.B) {
+	b.SetBytes(int64(len(browserUA)))
+	for n := 0; n < b.N; n++ {
+		if IsCrawlerCached(browserUA) {
+			b.Fail()
+		}
+	}
+}
+
+func BenchmarkMatchingCrawlersCachedNegative(b *testing.B) {
+	b.SetBytes(int64(len(browserUA)))
+	for n := 0; n < b.N; n++ {
+		if len(MatchingCrawlersCached(browserUA)) != 0 {
+			b.Fail()
+		}
+	}
+}
